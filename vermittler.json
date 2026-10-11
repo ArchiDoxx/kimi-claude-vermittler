@@ -1,0 +1,20 @@
+{
+  "port": 37790,
+  "upstream": "https://api.anthropic.com",
+  "mode": "ttl1h",
+  "modeByModel": {
+    "claude-fable-5-1": "ping"
+  },
+  "ping": {
+    "intervalSec": 240,
+    "maxIdleMin": 60,
+    "heartbeatGraceSec": 180
+  },
+  "logPath": "./protokoll.jsonl",
+  "preise": {
+    "claude-opus-5-5": { "input": 4, "w5m": 5, "w1h": 8, "read": 0.2, "output": 20 },
+    "claude-sonnet-5-5": { "input": 2, "w5m": 2.5, "w1h": 4, "read": 0.1, "output": 10 },
+    "claude-fable-5-1": { "input": 10, "w5m": 12.5, "w1h": 20, "read": 0.25, "output": 50 },
+    "claude-haiku-5-5": { "input": 0.1, "w5m": 0.125, "w1h": 0.2, "read": 0.01, "output": 0.5 }
+  }
+}

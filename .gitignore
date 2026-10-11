@@ -1,0 +1,8 @@
+# Laufzeitdaten und Sicherungen, nie ins Repo
+protokoll.jsonl
+*.jsonl
+*.bak*
+node_modules/
+.vermittler-lokal.json
+vermittler.log
+vermittler.pid
