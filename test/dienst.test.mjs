@@ -394,3 +394,140 @@ test('K57: Argumente pruefen vor dem Laden der Konfig; Hilfe ohne Konfigzwang', 
   assert.match(unbekannt.stderr, /Aufruf:/);
   assert.equal(unbekannt.stderr.includes('Konfiguration nicht lesbar'), false);
 });
+
+// ---------- Iteration 7 ----------
+import { istNodeProzess, stoppeHaengenden, stoppeDienst, schreibeAtomar, starteLosgeloest as starteLos } from '../lib/dienst.mjs';
+
+test('K68: istNodeProzess erkennt Node-Prozesse, fremde Abbilder und nicht vorhandene pids', async () => {
+  const { port } = await konfigMitFreiemPort();
+  const a = starteAttrappe(port, 'haengt');
+  await a.bereit;
+  const fremd = process.platform === 'win32'
+    ? spawn('cmd.exe', ['/c', 'ping', '-n', '30', '127.0.0.1'], { windowsHide: true })
+    : spawn('sleep', ['30']);
+  try {
+    assert.equal(istNodeProzess(a.kind.pid), true);
+    assert.equal(istNodeProzess(process.pid), true);
+    assert.equal(istNodeProzess(fremd.pid), false);
+    assert.equal(istNodeProzess(FREMDE_PID), false);
+  } finally {
+    a.kind.kill();
+    fremd.kill();
+    await a.beendet;
+  }
+});
+
+test('K68: kein Node-Abbild -> nicht toeten, PID-Datei als veraltet loeschen, pid-fremd', { timeout: 40000 }, async () => {
+  const { port, pfad } = await konfigMitFreiemPort();
+  const a = starteAttrappe(port, 'haengt');
+  await a.bereit;
+  const pidDatei = path.join(path.dirname(pfad), 'vermittler.pid');
+  fs.writeFileSync(pidDatei, JSON.stringify({ pid: a.kind.pid, port, version: VERSION, gestartet: new Date().toISOString() }));
+  try {
+    const erg = await stoppeHaengenden(port, pfad, { istNodeProzess: () => false });
+    assert.equal(erg, 'pid-fremd');
+    assert.equal(lebt(a.kind.pid), true, 'fremder Prozess wurde getoetet');
+    assert.equal(fs.existsSync(pidDatei), false, 'veraltete PID-Datei blieb liegen');
+  } finally {
+    a.kind.kill();
+    await a.beendet;
+  }
+});
+
+test('K68: die eigene pid wird nie getoetet', { timeout: 40000 }, async () => {
+  const { port, pfad } = await konfigMitFreiemPort();
+  const attr = await attrappe(port, (req, res) => {
+    if (req.url === '/_vermittler/health') {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ ok: true, dienst: DIENST, version: VERSION, pid: process.pid }));
+      return;
+    }
+    res.writeHead(404);
+    res.end();
+  });
+  fs.writeFileSync(path.join(path.dirname(pfad), 'vermittler.pid'), JSON.stringify({ pid: process.pid, port }));
+  try {
+    const erg = await stoppeDienst(port, { pid: process.pid }, { konfigPfad: pfad });
+    assert.equal(erg, 'pid-fremd');
+  } finally {
+    await schliesse(attr);
+  }
+});
+
+test('K68/K69: cliStop meldet pid-fremd als veraltete PID-Datei', { timeout: 40000 }, async () => {
+  const { port, pfad } = await konfigMitFreiemPort();
+  const alt = await eigeneAttrappe(port);
+  // PID-Datei zeigt auf einen lebenden Nicht-Node-Prozess
+  const fremd = process.platform === 'win32'
+    ? spawn('cmd.exe', ['/c', 'ping', '-n', '60', '127.0.0.1'], { windowsHide: true })
+    : spawn('sleep', ['60']);
+  try {
+    const attrappenPid = FREMDE_PID;
+    assert.ok(attrappenPid);
+    fs.writeFileSync(path.join(path.dirname(pfad), 'vermittler.pid'), JSON.stringify({ pid: fremd.pid, port }));
+    // die Attrappe meldet die pid des fremden Prozesses
+    await schliesse(alt);
+    const meldet = await attrappe(port, (req, res) => {
+      if (req.url === '/_vermittler/health') {
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ ok: true, dienst: DIENST, version: VERSION, pid: fremd.pid }));
+        return;
+      }
+      res.writeHead(404);
+      res.end();
+    });
+    try {
+      const stop = await fuehreAus([CLI, 'stop', '--konfig', pfad], { timeoutMs: 30000 });
+      assert.equal(stop.code, 1);
+      assert.match(stop.stderr, /PID-Datei veraltet, nichts beendet/);
+      assert.equal(lebt(fremd.pid), true);
+    } finally {
+      await schliesse(meldet);
+    }
+  } finally {
+    fremd.kill();
+  }
+});
+
+test('K69: stoppeHaengenden nimmt den sanften Weg, wenn der Dienst wieder antwortet', { timeout: 40000 }, async () => {
+  const { port, pfad } = await konfigMitFreiemPort();
+  let anfragen = 0;
+  let server;
+  server = await attrappe(port, (req, res) => {
+    anfragen += 1;
+    if (anfragen === 1) return; // erste Anfrage haengt
+    if (req.url === '/_vermittler/health') {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ ok: true, dienst: DIENST, version: VERSION, pid: FREMDE_PID }));
+      return;
+    }
+    if (req.url === '/_vermittler/stop') {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end('{"ok":true}', () => { server.closeAllConnections(); server.close(); });
+      return;
+    }
+    res.writeHead(404);
+    res.end();
+  });
+  assert.equal((await pruefeDienst(port, 300)).art, 'besetzt');
+  const erg = await stoppeHaengenden(port, pfad, { istNodeProzess: () => { throw new Error('darf nicht gerufen werden'); } });
+  assert.equal(erg, 'gestoppt');
+  assert.equal((await pruefeDienst(port, 300)).art, 'keiner');
+});
+
+test('K70: schreibeAtomar raeumt die Tempdatei auf, wenn das Umbenennen scheitert', () => {
+  const ordner = tempOrdner();
+  const ziel = path.join(ordner, 'ist-ein-ordner');
+  fs.mkdirSync(ziel);
+  fs.writeFileSync(path.join(ziel, 'inhalt'), 'x');
+  assert.throws(() => schreibeAtomar(ziel, 'text'));
+  assert.deepEqual(fs.readdirSync(ordner), ['ist-ein-ordner']);
+});
+
+test('K71: fehlender oder leerer konfigPfad -> konfig-fehlt statt eines Wurfs', async () => {
+  assert.equal(await starteLos(undefined), 'konfig-fehlt');
+  assert.equal(await starteLos(''), 'konfig-fehlt');
+  const { konfig } = await konfigMitFreiemPort();
+  assert.equal((await stelleSicher(konfig, {})).ergebnis, 'konfig-fehlt');
+  assert.equal((await stelleSicher(konfig, { konfigPfad: '' })).ergebnis, 'konfig-fehlt');
+});

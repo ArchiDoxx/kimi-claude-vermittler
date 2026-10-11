@@ -4,7 +4,7 @@
 |---|---|
 | **Datum** | 2026-10-11 |
 | **Fassung** | 2 (Review Deimon 2026-10-11 eingearbeitet: 12 Befunde, 4 Entscheide) |
-| **Status** | **Gebaut und live bestanden** (2026-10-11): Stufe 1 (A, T2) und Stufe 2 (Ping). Zwei Reviews (Deimon), 122 Tests. Betrieb: `ttl1h` Standard, Fable 5.1 auf `ping` (§7) |
+| **Status** | **Gebaut, live bestanden, Review-Schleife beendet** (2026-10-11, Version 0.4.1): Stufe 1 (A, T2), Stufe 2 (Ping), Setup für einen zweiten PC. Drei Deimon-Reviews, vier externe Kimi-Runden (§14), sieben Iterationen, 239 Tests. Betrieb: `ttl1h` Standard, Fable 5.1 auf `ping` (§7). Repo: `ArchiDoxx/kimi-claude-vermittler` (privat) |
 | **Autor** | Lucas Vöhringer |
 | **Geltungsbereich** | Private Maschinen-Werkzeugkette (Kimi Code CLI auf `C:\Users\luceb`), kein OS-/Firmenrepo |
 
@@ -370,3 +370,5 @@ Nach Bau und zwei Deimon-Reviews aus derselben Sitzung ein unabhängiges Zweitmo
 **Bewusst offen (Runde 3, Bedrohungsmodell Einzelplatz):** Ein lokaler Prozess desselben Benutzerkontos, der den Port besetzt und `health` nachahmt, könnte Claude-Verkehr an sich ziehen oder über eine veraltete PID-Datei einen fremden Prozess töten lassen; ein solcher Prozess kann auf dieser Maschine ohnehin alles, was der Benutzer kann. Deshalb keine HMAC-Authentifizierung des Health-Endpunkts und keine Prozess-Identitätsprüfung über Startzeit · Speichergrenzen (32 MB × 256) für einen Einzelplatz-Proxy ausreichend · `subagent-ende` verwirft alle Nebenschlüssel, weil der Hook keinen Schlüssel liefert (laufende Subagenten halten ihren Cache durch eigene Anfragen) · Rückweg lässt Provider- und Modellblöcke stehen · kein vollständiges TOML-Unescaping · Ping-Kette einer Sitzung, die während einer laufenden Anfrage endet, läuft höchstens 180 s weiter (Totmann).
 
 **Abbruchregel (2026-10-11):** Nach Iteration 6 eine letzte Kimi-Prüfung nur der geänderten Stellen. Ohne Blocker und ohne belegten Major gilt der Stand als befundfrei; weitere Minors werden hier geführt, nicht iteriert.
+
+**Runde 4, Schlussprüfung von `lib/dienst.mjs` (Version 0.4.0):** kein Blocker, zwei belegte Majors im Kill-Pfad, beide in Iteration 7 (Version 0.4.1) geschlossen: vor jedem `process.kill` wird geprüft, dass die PID nicht die eigene ist und das Abbild ein Node-Prozess (`tasklist` bzw. `ps`), sonst gilt die PID-Datei als veraltet und wird gelöscht; `stoppeHaengenden` prüft erst 5 s erneut und versucht den sanften Stopp, bevor es tötet (Aufrufer ist nur `cliStop`, nie der Hook). Minors als bewusst offen: Tempdatei-Reste bei fehlgeschlagener Umbenennung (nun aufgeräumt), Logrotation während der alte Dienst die Datei hält, nicht-atomares Lesen-dann-Löschen der PID-Datei, Verlierer eines gleichzeitigen Starts meldet `stopp-fehler`, stdout des Kindes verworfen. **Damit ist die Review-Schleife beendet.**

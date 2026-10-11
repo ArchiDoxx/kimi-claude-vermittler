@@ -482,6 +482,7 @@ const START_MELDUNG = Object.freeze({
   'spawn-fehler': () => 'Start nicht moeglich: Prozess liess sich nicht starten.',
   'stopp-fehler': () => 'Alte Version liess sich nicht beenden.',
   zeitueberschreitung: () => 'Start nicht bestaetigt: Dienst antwortet nicht binnen 5 s (siehe vermittler.log).',
+  'konfig-fehlt': () => 'Start nicht moeglich: kein Konfigurationspfad.',
 });
 
 const START_WORT = Object.freeze({ laeuft: 'laeuft bereits', gestartet: 'gestartet', erneuert: 'erneuert (neue Version oder Konfiguration)' });
@@ -499,6 +500,7 @@ async function cliStart(konfig, konfigPfad) {
 const STOPP_MELDUNG = Object.freeze({
   'pid-ungueltig': 'Dienst reagiert nicht auf den Stopp-Endpunkt und meldet eine ungueltige pid; nichts beendet.',
   'pid-unbelegt': 'Dienst reagiert nicht auf den Stopp-Endpunkt; ohne passende vermittler.pid wird nichts getoetet (pid-unbelegt).',
+  'pid-fremd': 'PID-Datei veraltet, nichts beendet (pid gehoert keinem Node-Prozess oder diesem Aufruf; Datei entfernt).',
 });
 
 async function cliStop(konfig, konfigPfad) {
@@ -508,10 +510,18 @@ async function cliStop(konfig, konfigPfad) {
     return 0;
   }
   if (z.art === 'besetzt') {
-    const erg = await stoppeHaengenden(konfig.port, konfigPfad);
+    const erg = await stoppeHaengenden(konfig.port, konfigPfad, { melde: fehlerAus });
     if (erg === 'besetzt-getoetet') {
       ausgabe(`besetzt-getoetet: haengende Instanz auf Port ${konfig.port} beendet`);
       return 0;
+    }
+    if (erg === 'gestoppt' || erg === 'getoetet') {
+      ausgabe(`${erg}: Dienst auf Port ${konfig.port} antwortete wieder und ist beendet`);
+      return 0;
+    }
+    if (Object.hasOwn(STOPP_MELDUNG, erg)) {
+      fehlerAus(STOPP_MELDUNG[erg]);
+      return 1;
     }
     fehlerAus(`${besetztMeldung(konfig.port)} Ohne passende vermittler.pid wird nichts beendet (${erg}).`);
     return 1;
