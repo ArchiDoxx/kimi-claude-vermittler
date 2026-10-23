@@ -12,6 +12,7 @@ import { leiteWeiter, sendeFehler, fehlerKoerper, anfrageKopfzeilen, istSicherer
 import { erzeugePingPlaner } from './lib/ping.mjs';
 import { erzeugeProtokoll, kennungen, sha12, leseProtokoll, werteAus, formatiereBericht } from './lib/protokoll.mjs';
 import { erzeugeSitzungen } from './lib/sitzungen.mjs';
+import { erzeugeLebenszeichen, standardKimiHome } from './lib/lebenszeichen.mjs';
 import { VERSION, DIENST } from './lib/kennung.mjs';
 import {
   pruefeDienst, stelleSicher, stoppeDienst, stoppeHaengenden, schreibePidDatei, entfernePidDatei,
@@ -29,7 +30,7 @@ const PREISFELDER = Object.freeze(['input', 'w5m', 'w1h', 'read', 'output']);
 const LOOPBACK = Object.freeze(new Set(['127.0.0.1', 'localhost', '[::1]']));
 const STOPP_GNADE_MS = 5000;
 const ZU_GROSS_NACHLAUF_MS = 2000;
-const BEKANNTE_SCHLUESSEL = Object.freeze(['port', 'upstream', 'mode', 'modeByModel', 'ping', 'logPath', 'preise']);
+const BEKANNTE_SCHLUESSEL = Object.freeze(['port', 'upstream', 'mode', 'modeByModel', 'ping', 'logPath', 'preise', 'kimiHome']);
 const PING_GRENZEN = Object.freeze({ intervalSec: [30, 285], maxIdleMin: [1, 1440], heartbeatGraceSec: [30, 3600] });
 
 const STANDARD = Object.freeze({
@@ -40,6 +41,7 @@ const STANDARD = Object.freeze({
   ping: { intervalSec: 240, maxIdleMin: 60, heartbeatGraceSec: 180 },
   logPath: './protokoll.jsonl',
   preise: {},
+  kimiHome: null,
 });
 
 // ---------- Konfiguration ----------
@@ -102,6 +104,9 @@ function pruefeKonfig(k) {
     if (!istGanzzahlIn(k.ping[name], min, max)) throw new Error(`Konfig: ping.${name} muss eine ganze Zahl von ${min} bis ${max} sein`);
   }
   if (typeof k.logPath !== 'string' || k.logPath.length === 0) throw new Error('Konfig: logPath muss ein Text sein');
+  if (k.kimiHome !== null && (typeof k.kimiHome !== 'string' || k.kimiHome.length === 0)) {
+    throw new Error('Konfig: kimiHome muss ein Text oder null sein');
+  }
 }
 
 function standardWarnung(text) {
@@ -138,7 +143,12 @@ export function normalisiereKonfig(eingabe, basisOrdner, { warne = standardWarnu
     preise: { ...(roh.preise ?? {}) },
   };
   pruefeKonfig(k);
-  return tiefFrieren({ ...k, logPath: loesePfad(k.logPath, basisOrdner), konfigHash: sha12(stabil(k)) });
+  return tiefFrieren({
+    ...k,
+    logPath: loesePfad(k.logPath, basisOrdner),
+    kimiHome: k.kimiHome === null ? null : loesePfad(k.kimiHome, basisOrdner),
+    konfigHash: sha12(stabil(k)),
+  });
 }
 
 export function standardKonfigPfad() {
@@ -254,19 +264,21 @@ function fehlercodeVon(fehler) {
 }
 
 // Optionen: log, jetzt, pingTimer, sende (Ping-Sendeweg), beende (nach dem Stopp; cliServe:
-// process.exit), maxBody, weiterleiten und protokoll (Tests).
+// process.exit), maxBody, weiterleiten, protokoll und lebenszeichen (Tests).
 // Liefert { server, sitzungen, protokoll, planer, stoppeSauber }.
 export function erzeugeServer(konfig, {
   log = stderrLog, jetzt = Date.now, pingTimer = true, sende, beende = () => {}, maxBody = MAX_BODY,
-  weiterleiten = leiteWeiter, protokoll: protokollVorgabe,
+  weiterleiten = leiteWeiter, protokoll: protokollVorgabe, lebenszeichen,
 } = {}) {
   const startMs = jetzt();
   const sitzungen = erzeugeSitzungen({ jetzt });
   const protokoll = protokollVorgabe ?? erzeugeProtokoll({
     logPfad: konfig.logPath, konfig, jetzt, meldeFehler: (f) => log(`Protokoll nicht schreibbar (${f?.code ?? 'unbekannt'})`),
   });
+  const kimiHome = konfig.kimiHome ?? standardKimiHome();
   const planer = erzeugePingPlaner({
     konfig, sitzungen, protokoll, jetzt, log, ...(sende ? { sende } : {}), ...(pingTimer ? {} : { timer: null }),
+    lebenszeichen: lebenszeichen ?? erzeugeLebenszeichen({ kimiHome }),
   });
   let server;
   let stoppt = false;
@@ -274,7 +286,7 @@ export function erzeugeServer(konfig, {
   function health() {
     return {
       ok: true, dienst: DIENST, version: VERSION, konfigHash: konfig.konfigHash, pid: process.pid, mode: konfig.mode,
-      uptimeSec: Math.round((jetzt() - startMs) / 1000), pingSchluessel: planer.anzahl(),
+      uptimeSec: Math.round((jetzt() - startMs) / 1000), pingSchluessel: planer.anzahl(), kimiHome,
     };
   }
 

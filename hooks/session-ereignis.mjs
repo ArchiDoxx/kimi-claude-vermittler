@@ -1,5 +1,6 @@
 #!/usr/bin/env node
-// Kimi-Hook fuer SessionEnd, SessionHeartbeat und SubagentStop.
+// Kimi-Hook fuer SessionEnd und SubagentStop. SessionHeartbeat wird weiter angenommen (alte
+// Einrichtungen), aber nicht mehr eingerichtet: Kimi 2.3.0 lehnt das Ereignis in config.toml ab.
 // Liest das Hook-JSON von stdin und meldet das Ereignis an den Vermittler.
 // Bremst Kimi nie: 2 s Timeout, alle Fehler werden geschluckt, Exit immer 0, stdout bleibt leer.
 import { ladeKonfig, standardKonfigPfad } from '../vermittler.mjs';

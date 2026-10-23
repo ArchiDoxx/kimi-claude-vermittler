@@ -13,7 +13,7 @@ import { schreibeAtomar } from '../lib/dienst.mjs';
 import {
   setzeProvider, setzeBaseUrl, entferneBaseUrl, ergaenzeModelle, zaehleModelle, modellAliase, unsereHooks,
   ergaenzeHooks, entferneHooks, zaehleHooks, leseDefaultModel, leseBaseUrl, hatKeyZeile, leseKeyEnv,
-  setzeCuWin, cuWinStatus, istLoopbackUrl,
+  setzeCuWin, cuWinStatus, istLoopbackUrl, alterHeartbeat,
 } from './lib/toml-patch.mjs';
 
 const WURZEL = path.resolve(import.meta.dirname, '..');
@@ -129,8 +129,13 @@ async function pruefen(o) {
       : `fehlt${url ? ` (steht auf ${url})` : ''}`);
     const nModelle = zaehleModelle(text, modelle);
     zeile('Modelle', vorhanden(nModelle === anzahlModelle, ` (${nModelle}/${anzahlModelle})`));
-    const nHooks = zaehleHooks(text, hooksFuerDiesenKlon());
-    zeile('Hooks', vorhanden(nHooks === 4, ` (${nHooks}/4)`));
+    const sollHooks = hooksFuerDiesenKlon();
+    const nHooks = zaehleHooks(text, sollHooks);
+    zeile('Hooks', vorhanden(nHooks === sollHooks.length, ` (${nHooks}/${sollHooks.length})`));
+    const altlast = alterHeartbeat(text);
+    if (altlast) {
+      zeile('Altlast', `SessionHeartbeat-Hook vorhanden (blockiert kimi login ab 2.3.0); ${altlast === 'eigen' ? 'einrichten entfernt ihn' : 'fremder Eintrag, von Hand entfernen'}`);
+    }
     zeile('default_model', leseDefaultModel(text) ?? '(nicht gesetzt)');
   } else {
     zeile('Schritte', 'nicht pruefbar ohne config.toml');

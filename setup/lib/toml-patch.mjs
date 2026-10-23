@@ -195,6 +195,9 @@ function vorwaerts(pfad) {
   return String(pfad).replace(/\\/g, '/').replace(/\/+$/, '');
 }
 
+// Kein SessionHeartbeat: Kimi Code CLI 2.3.0 lehnt das Ereignis beim Schreiben der config.toml ab
+// (Login scheitert mit config.invalid). Das Lebenszeichen liest der Vermittler selbst
+// (lib/lebenszeichen.mjs); einrichten ersetzt einen alten Heartbeat-Eintrag durch diese drei.
 export function unsereHooks(nodePfad, klonPfad) {
   const node = vorwaerts(nodePfad);
   const klon = vorwaerts(klonPfad);
@@ -202,7 +205,6 @@ export function unsereHooks(nodePfad, klonPfad) {
   return Object.freeze([
     { event: 'SessionStart', command: befehl('session-start.mjs') },
     { event: 'SessionEnd', command: befehl('session-ereignis.mjs') },
-    { event: 'SessionHeartbeat', command: befehl('session-ereignis.mjs') },
     { event: 'SubagentStop', command: befehl('session-ereignis.mjs') },
   ].map((h) => Object.freeze(h)));
 }
@@ -265,6 +267,14 @@ function entferneHooksLf(text) {
   return eigene.length === 0 ? text : rest.join('\n');
 }
 
+// Ein SessionHeartbeat-Hook macht config.toml ab Kimi 2.3.0 unschreibbar: 'eigen' (einrichten
+// entfernt ihn), 'fremd' (von Hand entfernen) oder null.
+function alterHeartbeatLf(text) {
+  const hb = hookEintraegeLf(text).filter((e) => e.event === 'SessionHeartbeat');
+  if (hb.length === 0) return null;
+  return hb.some((e) => !istEigenerHook(e.command)) ? 'fremd' : 'eigen';
+}
+
 function zaehleHooksLf(text, hooks) {
   const da = hookEintraegeLf(text);
   return hooks.filter((h) => da.some((e) => e.event === h.event && e.command === h.command)).length;
@@ -319,4 +329,5 @@ export const modellAliase = aufLf(modellAliaseLf);
 export const zaehleModelle = aufLf(zaehleModelleLf);
 export const hookEintraege = aufLf(hookEintraegeLf);
 export const zaehleHooks = aufLf(zaehleHooksLf);
+export const alterHeartbeat = aufLf(alterHeartbeatLf);
 export const leseDefaultModel = aufLf(leseDefaultModelLf);

@@ -23,7 +23,7 @@ PID- und Logdatei liegen neben `vermittler.json` im Klon. Nach einem Umzug des K
 ## Voraussetzungen
 
 1. **Node.js ab 20.11** (`node --version`). Keine npm-Abhängigkeiten, kein `npm install` im Repo.
-2. **Kimi Code CLI ab 2.1.1**: `npm install -g @moonshot-ai/kimi-code`, dann `kimi` einmal starten
+2. **Kimi Code CLI ab 2.1.1** (getestet mit 2.3.0): `npm install -g @moonshot-ai/kimi-code`, dann `kimi` einmal starten
    und beenden, damit `~/.kimi-code/config.toml` existiert.
 3. **Anthropic-API-Key**, auf genau einem dieser Wege:
    - als Umgebungsvariable `ANTHROPIC_API_KEY` (Standard: das Setup trägt
@@ -58,10 +58,11 @@ node vermittler.mjs status
      Key bleibt bis auf `base_url` bytegleich),
    - `base_url = "http://127.0.0.1:37790"` im Provider-Block,
    - die 17 Claude-Modellblöcke aus `setup/modelle.toml`, je Block nur wenn er fehlt,
-   - die vier `[[hooks]]` (SessionStart, SessionEnd, SessionHeartbeat, SubagentStop) mit
-     absolutem Node-Pfad und absolutem Klon-Pfad, `timeout = 5`. Eigene Hooks erkennt es am
-     Skriptnamen (`hooks/session-start.mjs`, `hooks/session-ereignis.mjs`); veraltete Einträge
-     (anderer Node-Pfad, anderer Klon-Ort, Duplikate) ersetzt es durch die vier aktuellen.
+   - die drei `[[hooks]]` (SessionStart, SessionEnd, SubagentStop) mit absolutem Node-Pfad und
+     absolutem Klon-Pfad, `timeout = 5`. Eigene Hooks erkennt es am Skriptnamen
+     (`hooks/session-start.mjs`, `hooks/session-ereignis.mjs`); veraltete Einträge (anderer
+     Node-Pfad, anderer Klon-Ort, Duplikate, ein alter SessionHeartbeat-Hook) ersetzt es durch
+     die drei aktuellen.
 
    Es meldet `default_model`, ändert es aber nicht. Schreibzugriffe auf `config.toml` und
    `installed.json` laufen atomar über eine Tempdatei. `--cu-win` schaltet das Plugin `kimi-cu-win` in `~/.kimi-code/plugins/installed.json`
@@ -104,13 +105,18 @@ schaden nicht. Danach spricht Kimi wieder direkt mit Anthropic (5 min Cache-Halt
 - **Windows-Pfade:** In `config.toml` stehen Pfade als `C:/…` mit Vorwärtsschrägstrichen. Nie
   Git-Bash-Pfade wie `/c/Users/…` eintragen; Kimi startet die Hooks nicht über Git Bash.
   `setup.mjs` nimmt die Pfade aus `process.execPath` und dem Klon-Ordner und rechnet sie selbst um.
-- **Hooks laufen nur, wenn sie registriert sind.** Ohne die vier Hooks startet der Vermittler
-  nicht von selbst (dann `node vermittler.mjs start`), und im Modus `ping` enden die Pings ohne
-  Heartbeat-Hook nach 180 s, also vor dem ersten Ping. `pruefen` zeigt `Hooks vorhanden (4/4)`.
+- **Hooks laufen nur, wenn sie registriert sind.** Ohne die drei Hooks startet der Vermittler
+  nicht von selbst (dann `node vermittler.mjs start`). `pruefen` zeigt `Hooks vorhanden (3/3)`.
+- **Kein `SessionHeartbeat`-Hook (Kimi 2.3.0):** Kimi lehnt das Ereignis beim Schreiben der
+  `config.toml` ab; `kimi login`, Provider- und Modellwechsel scheitern dann mit `config.invalid`,
+  während `kimi doctor` die Datei als gültig meldet. Meldet `pruefen` eine `Altlast`, `einrichten`
+  ausführen (eigener Eintrag) oder den fremden Eintrag vom Menschen entfernen lassen. Das
+  Lebenszeichen für den Modus `ping` liest der Vermittler selbst aus Kimis Session-Lockdatei.
 - **Node-Update oder Umzug des Klons:** `node setup/setup.mjs einrichten` erneut ausführen; es
   ersetzt die alten Hook-Einträge selbst.
-- **Heartbeat-Hook im Modus `ping`:** Der Vermittler nimmt Heartbeats nur für Sessions an, die
-  schon eine Claude-Anfrage gestellt haben.
+- **Claude bis 4.5 mit `effort` `max`:** Kimi 2.3.0 schickt dort kein Denkbudget (API-400
+  „budget_tokens: Field required“); der Vermittler ergänzt es (T3, README). Direkt an Anthropic
+  ohne Vermittler bleiben diese Modelle bei `effort = "max"` defekt.
 - **`kimi-cu-win`** kostet etwa 5.300 Tokens Grundlast je Anfrage. Nur mit `--cu-win` einschalten,
   wenn der Mensch es will.
 - **Code-Update:** Nach einem `git pull` mit neuer Version erneuert der SessionStart-Hook den

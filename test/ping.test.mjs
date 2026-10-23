@@ -69,7 +69,7 @@ test('pingAusschluss: die vier Ausschluesse, sonst null', () => {
 
 // ---------- Planer ----------
 
-function aufbau({ ping = PING, antwort = { status: 200, usage: { input_tokens: 3, cache_read_input_tokens: 5000, output_tokens: 0 } } } = {}) {
+function aufbau({ ping = PING, antwort = { status: 200, usage: { input_tokens: 3, cache_read_input_tokens: 5000, output_tokens: 0 } }, lebenszeichen } = {}) {
   let ms = Date.parse('2026-10-11T10:00:00Z');
   const jetzt = () => ms;
   const logPfad = path.join(tempOrdner(), 'p.jsonl');
@@ -84,6 +84,7 @@ function aufbau({ ping = PING, antwort = { status: 200, usage: { input_tokens: 3
   };
   const planer = erzeugePingPlaner({
     konfig: { upstream: 'http://upstream.test', ping }, jetzt, sende, sitzungen, protokoll, timer: null, log: () => {},
+    ...(lebenszeichen ? { lebenszeichen } : {}),
   });
   return {
     planer, sitzungen, gesendet, logPfad, jetzt,
@@ -561,5 +562,58 @@ test('K60: stoppe bricht laufende Pings ab und leert alle Zustaende', async () =
   assert.equal(u.planer.anzahl(), 0);
   freigeben();
   await laeuft;
+  assert.equal(u.planer.anzahl(), 0);
+});
+
+// ---------- Lebenszeichen ohne Heartbeat-Hook (0.5.0) ----------
+
+const KIMI_ID = 'session_45b17fec-fe8a-487d-af63-1691d0006717';
+const KIMI_BODY = { ...ORIGINAL, metadata: { user_id: KIMI_ID } };
+
+test('0.5.0: laufender Kimi-Prozess haelt die Pings ohne Heartbeat ueber die Gnadenfrist hinaus', async () => {
+  const gefragt = [];
+  const u = aufbau({ ping: TOTMANN, lebenszeichen: (id) => { gefragt.push(id); return true; } });
+  melde(u, { body: KIMI_BODY });
+  byte(u, 'k1');
+  u.vor(240);
+  await u.planer.pruefe();
+  u.vor(240);
+  await u.planer.pruefe();
+  assert.equal(u.gesendet.length, 2, '480 s ohne Heartbeat, Prozess lebt');
+  assert.ok(gefragt.length > 0 && gefragt.every((id) => id === KIMI_ID), 'gefragt wird mit metadata.user_id');
+});
+
+test('0.5.0: beendeter Kimi-Prozess beendet die Pings auch bei frischem Heartbeat', async () => {
+  const u = aufbau({ ping: TOTMANN, lebenszeichen: () => false });
+  melde(u, { body: KIMI_BODY });
+  byte(u, 'k1');
+  u.vor(200);
+  u.sitzungen.heartbeat('sess');
+  u.vor(40);
+  await u.planer.pruefe();
+  assert.equal(u.gesendet.length, 0);
+  assert.equal(u.planer.anzahl(), 0);
+});
+
+test('0.5.0: unbekanntes Lebenszeichen (null) oder Fehler -> alte Gnadenfrist', async () => {
+  for (const lebenszeichen of [() => null, () => { throw new Error('kaputt'); }]) {
+    const u = aufbau({ ping: TOTMANN, lebenszeichen });
+    melde(u, { body: KIMI_BODY });
+    byte(u, 'k1');
+    u.vor(240);
+    await u.planer.pruefe();
+    assert.equal(u.gesendet.length, 0, '180 s Gnadenfrist ohne Heartbeat');
+  }
+});
+
+test('0.5.0: maxIdleMin begrenzt auch bei lebendem Prozess', async () => {
+  const u = aufbau({ ping: { intervalSec: 240, maxIdleMin: 10, heartbeatGraceSec: 180 }, lebenszeichen: () => true });
+  melde(u, { body: KIMI_BODY });
+  byte(u, 'k1');
+  for (let i = 0; i < 5; i += 1) {
+    u.vor(240);
+    await u.planer.pruefe();
+  }
+  assert.equal(u.gesendet.length, 2, 'Pings bei 240 und 480 s, danach Ende nach 10 min');
   assert.equal(u.planer.anzahl(), 0);
 });

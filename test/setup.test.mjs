@@ -7,6 +7,7 @@ import path from 'node:path';
 import {
   tomlString, setzeProvider, setzeBaseUrl, entferneBaseUrl, ergaenzeModelle, zaehleModelle, modellAliase,
   unsereHooks, hookEintraege, ergaenzeHooks, entferneHooks, leseDefaultModel, leseBaseUrl, setzeCuWin, cuWinStatus,
+  alterHeartbeat,
 } from '../setup/lib/toml-patch.mjs';
 import { tempOrdner, schreibeKonfig, freierPort, fuehreAus, WURZEL, TESTSCHLUESSEL } from './hilfen.mjs';
 
@@ -53,9 +54,9 @@ test('tomlString maskiert Anfuehrungszeichen und Backslashes', () => {
   assert.equal(tomlString('a"b\\c'), '"a\\"b\\\\c"');
 });
 
-test('unsereHooks: vier Eintraege, absolute Pfade mit Vorwaertsschraegstrichen', () => {
+test('unsereHooks: drei Eintraege ohne SessionHeartbeat (Kimi 2.3.0), absolute Pfade mit Vorwaertsschraegstrichen', () => {
   const hooks = unsereHooks(NODE, KLON);
-  assert.deepEqual(hooks.map((h) => h.event), ['SessionStart', 'SessionEnd', 'SessionHeartbeat', 'SubagentStop']);
+  assert.deepEqual(hooks.map((h) => h.event), ['SessionStart', 'SessionEnd', 'SubagentStop']);
   assert.equal(hooks[0].command, '"C:/Program Files/nodejs/node.exe" "C:/Users/jemand/.kimi-code/tools/anthropic-vermittler/hooks/session-start.mjs"');
   assert.ok(hooks.slice(1).every((h) => h.command.endsWith('/hooks/session-ereignis.mjs"')));
   assert.ok(hooks.every((h) => !h.command.includes('\\')));
@@ -134,11 +135,11 @@ test('ergaenzeModelle haengt nur fehlende Bloecke an; idempotent', () => {
 
 // ---------- Hooks ----------
 
-test('ergaenzeHooks: vier Eintraege mit timeout 5, fremde Hooks bleiben; idempotent', () => {
+test('ergaenzeHooks: drei Eintraege mit timeout 5, fremde Hooks bleiben; idempotent', () => {
   const hooks = unsereHooks(NODE, KLON);
   const einmal = ergaenzeHooks(MIT_KEY, hooks);
   const eintraege = hookEintraege(einmal);
-  assert.equal(eintraege.length, 5);
+  assert.equal(eintraege.length, 4);
   assert.equal(eintraege[0].command, '"C:/py.exe" "C:/mneme/session_start.py" --target kimi');
   for (const h of hooks) {
     const treffer = eintraege.filter((e) => e.event === h.event && e.command === h.command);
@@ -241,7 +242,7 @@ test('setup.mjs: pruefen, einrichten, idempotent, rueckweg; nie ein Key in der A
   assert.equal(leseBaseUrl(nachher), `http://127.0.0.1:${port}`);
   assert.equal(zaehleModelle(nachher, MODELLE), 17);
   const klon = WURZEL.replace(/\\/g, '/');
-  assert.equal(hookEintraege(nachher).filter((e) => e.command.includes(`${klon}/hooks/`)).length, 4);
+  assert.equal(hookEintraege(nachher).filter((e) => e.command.includes(`${klon}/hooks/`)).length, 3);
   assert.ok(nachher.includes(`api_key = "${TESTSCHLUESSEL}"`));
   const sicherungen = fs.readdirSync(home).filter((n) => /^config\.toml\.bak-\d{4}-\d{2}-\d{2}-\d{4}/.test(n));
   assert.ok(sicherungen.length >= 1, 'Sicherung fehlt');
@@ -254,7 +255,8 @@ test('setup.mjs: pruefen, einrichten, idempotent, rueckweg; nie ein Key in der A
 
   const geprueft = await lauf('pruefen');
   assert.match(geprueft.stdout, /base_url\s+vorhanden/);
-  assert.match(geprueft.stdout, /Hooks\s+vorhanden \(4\/4\)/);
+  assert.match(geprueft.stdout, /Hooks\s+vorhanden \(3\/3\)/);
+  assert.doesNotMatch(geprueft.stdout, /Altlast/);
 
   const zurueck = await lauf('rueckweg');
   assert.equal(zurueck.code, 0, zurueck.stderr);
@@ -292,7 +294,7 @@ test('K39: CRLF-Datei: alle Patcher idempotent, kein gemischtes Zeilenende, Lese
   assert.equal(leseBaseUrl(einmal), 'http://127.0.0.1:4242');
   assert.equal(leseDefaultModel(einmal), 'kimi-code/k3');
   assert.equal(zaehleModelle(einmal, MODELLE), 17);
-  assert.equal(hookEintraege(einmal).length, 5);
+  assert.equal(hookEintraege(einmal).length, 4);
   const zurueck = entferneHooks(entferneBaseUrl(einmal), KLON);
   assert.ok(nurCrlf(zurueck));
   assert.equal(leseBaseUrl(zurueck), null);
@@ -343,7 +345,7 @@ test('K67: doppelter Block in modelle.toml wird nur einmal angehaengt', () => {
   assert.equal(neu.split('[models."anthropic/x"]').length, 2);
 });
 
-test('K62: eigene Hooks werden am Skriptnamen erkannt und durch die vier aktuellen ersetzt', () => {
+test('K62: eigene Hooks werden am Skriptnamen erkannt und durch die drei aktuellen ersetzt', () => {
   const alt = [
     MIT_KEY.trimEnd(),
     '',
@@ -360,12 +362,41 @@ test('K62: eigene Hooks werden am Skriptnamen erkannt und durch die vier aktuell
   const hooks = unsereHooks(NODE, KLON);
   const neu = ergaenzeHooks(alt, hooks);
   const eintraege = hookEintraege(neu);
-  assert.equal(eintraege.length, 5, 'mneme + vier aktuelle');
+  assert.equal(eintraege.length, 4, 'mneme + drei aktuelle');
   assert.equal(eintraege.filter((e) => e.command.toLowerCase().includes('alter-klon')).length, 0);
   for (const h of hooks) assert.equal(eintraege.filter((e) => e.event === h.event && e.command === h.command).length, 1, h.event);
   assert.equal(ergaenzeHooks(neu, hooks), neu);
   assert.equal(hookEintraege(entferneHooks(alt)).length, 1, 'rueckweg entfernt eigene Hooks jeden Pfads');
   assert.equal(hookEintraege(entferneHooks(neu)).length, 1);
+});
+
+test('Kimi 2.3.0: ein alter eigener SessionHeartbeat-Hook wird erkannt und von einrichten entfernt', () => {
+  const hooks = unsereHooks(NODE, KLON);
+  const befehl = hooks[1].command;
+  const alt = `${ergaenzeHooks(MIT_KEY, hooks)}
+[[hooks]]
+event = "SessionHeartbeat"
+command = ${tomlString(befehl)}
+timeout = 5
+`;
+  assert.equal(alterHeartbeat(alt), 'eigen');
+  const neu = ergaenzeHooks(alt, hooks);
+  assert.equal(hookEintraege(neu).filter((e) => e.event === 'SessionHeartbeat').length, 0);
+  assert.equal(alterHeartbeat(neu), null);
+  assert.equal(neu, ergaenzeHooks(MIT_KEY, hooks), 'Ergebnis gleich einer frischen Einrichtung');
+  assert.equal(ergaenzeHooks(neu, hooks), neu);
+});
+
+test('Kimi 2.3.0: ein fremder SessionHeartbeat-Hook wird gemeldet, aber nicht angefasst', () => {
+  const fremd = `${MIT_KEY}
+[[hooks]]
+event = "SessionHeartbeat"
+command = "node C:/anderes/tool.js"
+`;
+  assert.equal(alterHeartbeat(fremd), 'fremd');
+  const neu = ergaenzeHooks(fremd, unsereHooks(NODE, KLON));
+  assert.equal(hookEintraege(neu).filter((e) => e.event === 'SessionHeartbeat').length, 1);
+  assert.equal(alterHeartbeat(MIT_KEY), null);
 });
 
 function homeMit(text) {

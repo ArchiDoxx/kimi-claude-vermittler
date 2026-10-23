@@ -125,3 +125,15 @@ test('K48: normalisiereKonfig veraendert und friert die Eingabe nicht ein', () =
   assert.ok(Object.isFrozen(k.preise.m));
   assert.notEqual(k.preise.m, roh.preise.m);
 });
+
+test('0.5.0: kimiHome ist optional, wird aufgeloest und streng geprueft', () => {
+  assert.equal(normalisiereKonfig({}, BASIS, still).kimiHome, null);
+  assert.equal(normalisiereKonfig({ kimiHome: './kimi' }, BASIS, still).kimiHome, path.resolve(BASIS, './kimi'));
+  assert.equal(normalisiereKonfig({ kimiHome: '~/.kimi-code' }, BASIS, still).kimiHome.endsWith('.kimi-code'), true);
+  for (const kimiHome of ['', 5, {}, []]) {
+    assert.throws(() => normalisiereKonfig({ kimiHome }, BASIS, still), /kimiHome/, JSON.stringify(kimiHome));
+  }
+  const warnungen = [];
+  normalisiereKonfig({ kimiHome: './k' }, BASIS, { warne: (t) => warnungen.push(t) });
+  assert.deepEqual(warnungen, [], 'kimiHome ist ein bekannter Schluessel');
+});

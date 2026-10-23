@@ -16,7 +16,7 @@ node setup/setup.mjs einrichten
 Einzelheiten, Key-Regeln und Rückweg (`node setup/setup.mjs rueckweg`) stehen in
 [CLAUDE.md](CLAUDE.md). Die Handanleitung unten bleibt gültig.
 
-Stand: Stufe 1 und Stufe 2.
+Stand: Stufe 1 und Stufe 2, Version 0.5.0 (angepasst an Kimi Code CLI 2.3.0).
 
 - **T1 Haltezeit:** setzt `ttl: "1h"` auf Kimis `cache_control`-Marken (Modus `ttl1h`, Standard).
   Weitere Modi: `sockel1h` (nur Tools und System 1 h), `ping` (siehe unten), `aus`.
@@ -26,20 +26,29 @@ Stand: Stufe 1 und Stufe 2.
   Vermittler alle `intervalSec` nach dem Start der letzten echten Anfrage den zuletzt gesendeten
   Body mit `max_tokens: 0` und `stream: false` und denselben Kopfzeilen. Voraussetzung: Die
   Antwort der echten Anfrage hat mit 2xx begonnen und ihr erstes Byte ist da. Ende nach
-  `maxIdleMin`, bei `SessionEnd`, bei ausbleibendem Heartbeat (länger als `heartbeatGraceSec`
-  seit dem letzten Heartbeat oder, ohne je einen, seit dem Start der letzten echten Anfrage) und
-  nach dem ersten gescheiterten Ping. **Im Modus `ping` ist der Heartbeat-Hook Pflicht**, sonst
-  enden die Pings nach `heartbeatGraceSec` (180 s), also vor dem ersten Ping bei 240 s.
+  `maxIdleMin`, bei `SessionEnd`, wenn der Kimi-Prozess der Session nicht mehr läuft, und nach
+  dem ersten gescheiterten Ping. **Lebenszeichen (ab 0.5.0):** Kimi legt je laufender Session
+  `~/.kimi-code/locks/sessions/<session-id>.lock` mit `pid` an; die Session-ID steht in jeder
+  Anfrage als `metadata.user_id`. Der Vermittler prüft bei jedem Takt, ob dieser Prozess lebt.
+  Ein Hook ist dafür nicht nötig. Ist das Lebenszeichen unbekannt (keine Lockdatei, anderes
+  Format, anderer Rechner), gilt die alte Gnadenfrist: Ende, wenn länger als `heartbeatGraceSec`
+  kein Heartbeat kam bzw., ohne je einen, seit dem Start der letzten echten Anfrage.
   `SubagentStop` verwirft die Nebenschlüssel (Hauptschlüssel ist der mit dem größten Sockel aus
   Tools und System). Pings ohne Session-ID gibt es nicht. Kein Ping bei `thinking.type: "enabled"`,
   `output_config.format` oder `tool_choice` `any`/`tool`. Jeder Ping steht als `art: "ping"`
   im Protokoll; `health` zeigt `pingSchluessel`.
 - **T2 Schema-Glättung:** Tool-Schemas mit `oneOf`/`anyOf`/`allOf` auf oberster Ebene werden
   zu einem Objekt mit allen Feldern aller Zweige; die Bedingung steht in `description`.
+- **T3 Denkbudget (ab 0.5.0):** Kimi 2.3.0 schickt für Budget-Modelle (Claude bis 4.5) bei
+  `effort` `max`/`xhigh` `thinking: {type: "enabled"}` ohne `budget_tokens`; die API antwortet mit
+  400. Der Vermittler ergänzt das Budget nach Kimis Staffel (low 1024, medium 4096, sonst 32000,
+  höchstens `max_tokens` − 1) und entfernt `output_config.effort`. Reicht `max_tokens` nicht für
+  1024, schaltet er Thinking ab.
 - **Kostenprotokoll** `protokoll.jsonl` mit Gegenrechnung der Varianten `ttl1h`, `ping`,
   `sockel1h`, `heute`, ohne Inhalte, Prompts oder Schlüssel.
 - **Hook-Endpunkte** unter `/_vermittler/` (`health`, `session-ende`, `heartbeat`,
-  `subagent-ende`); sie führen den Sitzungszustand und steuern den Ping-Planer.
+  `subagent-ende`); sie führen den Sitzungszustand und steuern den Ping-Planer. `heartbeat`
+  bleibt für alte Einrichtungen erreichbar, eingerichtet wird der Hook nicht mehr (siehe unten).
 
 Bauplan: `2026-10-11 Bauplan Anthropic-Vermittler.md` in diesem Ordner.
 
@@ -65,7 +74,7 @@ Node.js ab 20.11 (wegen `import.meta.dirname`), keine npm-Abhängigkeiten, kein 
 
    Das SDK hängt `/v1/messages` selbst an.
 
-3. Am Ende von `config.toml` die vier Hooks ergänzen. Der Node-Pfad ist auf dieser Maschine mit
+3. Am Ende von `config.toml` die drei Hooks ergänzen. Der Node-Pfad ist auf dieser Maschine mit
    `node -e "console.log(process.execPath)"` belegt (`C:\Program Files\nodejs\node.exe`, 2026-10-11);
    auf einer anderen Maschine dort den eigenen Wert eintragen.
 
@@ -81,15 +90,15 @@ Node.js ab 20.11 (wegen `import.meta.dirname`), keine npm-Abhängigkeiten, kein 
    timeout = 5
 
    [[hooks]]
-   event = "SessionHeartbeat"
-   command = "\"C:/Program Files/nodejs/node.exe\" \"C:/Users/luceb/.kimi-code/tools/anthropic-vermittler/hooks/session-ereignis.mjs\""
-   timeout = 5
-
-   [[hooks]]
    event = "SubagentStop"
    command = "\"C:/Program Files/nodejs/node.exe\" \"C:/Users/luceb/.kimi-code/tools/anthropic-vermittler/hooks/session-ereignis.mjs\""
    timeout = 5
    ```
+
+   **Keinen `SessionHeartbeat`-Hook eintragen.** Kimi Code CLI 2.3.0 führt das Ereignis zwar aus,
+   lehnt es aber beim Schreiben der `config.toml` ab (`config.invalid`): `kimi login`, Provider- und
+   Modellwechsel scheitern dann. Ein vorhandener Eintrag des Vermittlers muss weg;
+   `node setup/setup.mjs einrichten` entfernt ihn, `pruefen` meldet ihn als `Altlast`.
 
    Der Start-Hook startet den Vermittler bei Bedarf losgelöst und wartet bis 2 s auf den Port.
    Meldet ein laufender eigener Dienst eine andere Version als der Code auf der Platte, stößt der
@@ -125,9 +134,10 @@ Konfiguration `vermittler.json`:
 | `upstream` | Ziel, Standard `https://api.anthropic.com`; `http:` nur für Loopback-Hosts |
 | `mode` | `ttl1h` \| `sockel1h` \| `ping` \| `aus` |
 | `modeByModel` | Modus je Modell-ID-Präfix |
-| `ping` | ganze Zahlen: `intervalSec` 30–285 (der Ping kann bis zu einem Takt von 5 s später kommen und muss trotzdem vor Ablauf des 5-min-Eintrags liegen), `maxIdleMin` 1–1440, `heartbeatGraceSec` 30–3600 (Ping-Planer und Gegenrechnung). In der Gegenrechnung gezählt werden Pings bei k·`intervalSec` strikt vor der nächsten Anfrage, höchstens bis `maxIdleMin` |
+| `ping` | ganze Zahlen: `intervalSec` 30–285 (der Ping kann bis zu einem Takt von 5 s später kommen und muss trotzdem vor Ablauf des 5-min-Eintrags liegen), `maxIdleMin` 1–1440, `heartbeatGraceSec` 30–3600 (Gnadenfrist des Ping-Planers, nur wenn das Lebenszeichen der Kimi-Session unbekannt ist). In der Gegenrechnung gezählt werden Pings bei k·`intervalSec` strikt vor der nächsten Anfrage, höchstens bis `maxIdleMin` |
 | `logPath` | Protokolldatei; relativ zur Konfigdatei (Standard `./protokoll.jsonl`), `~` wird aufgelöst |
 | `preise` | Listenpreise je Million Tokens: `input`, `w5m`, `w1h`, `read`, `output` (Zahlen ab 0) |
+| `kimiHome` | optional, Kimi-Verzeichnis für das Lebenszeichen (Lockdateien); Standard `KIMI_CODE_HOME`, sonst `~/.kimi-code`. `health` zeigt den verwendeten Wert |
 
 Unbekannte Schlüssel auf oberster Ebene erzeugen eine Warnung auf stderr, brechen aber nicht ab.
 `upstream` darf nur Schema, Host und Port enthalten. Eine UTF-8-BOM vor dem JSON wird vertragen;
@@ -163,7 +173,7 @@ Vordergrund starten (Strg+C stoppt sauber, ein zweites Strg+C sofort).
 ## Rückweg
 
 1. In `config.toml` die Zeile `base_url` unter `[providers.anthropic]` entfernen.
-2. Die vier `[[hooks]]`-Einträge des Vermittlers entfernen.
+2. Die `[[hooks]]`-Einträge des Vermittlers entfernen (drei, bei alten Einrichtungen vier).
 3. `node vermittler.mjs stop`, dann den Ordner `~/.kimi-code/tools/anthropic-vermittler/` löschen.
 
 Kimi läuft danach wieder direkt mit 5 min Haltezeit.

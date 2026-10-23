@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { setzeHaltezeit, glaetteSchemas, transformiere, modusFuer, zaehleMarken } from '../lib/transform.mjs';
+import { setzeHaltezeit, glaetteSchemas, transformiere, modusFuer, zaehleMarken, ergaenzeDenkbudget } from '../lib/transform.mjs';
 import { tiefFrieren } from './hilfen.mjs';
 
 const EPH = () => ({ type: 'ephemeral' });
@@ -239,4 +239,58 @@ test('modusFuer: Praefix-Treffer in modeByModel, laengster gewinnt, sonst mode',
   assert.equal(modusFuer(konfig, 'claude-fable-5'), 'ping');
   assert.equal(modusFuer(konfig, 'claude-opus-5-5'), 'ttl1h');
   assert.equal(modusFuer(konfig, undefined), 'ttl1h');
+});
+
+// ---------- T3: Denkbudget ----------
+
+function budgetBody(effort, maxTokens = 64000) {
+  return tiefFrieren({
+    model: 'claude-haiku-4-5', max_tokens: maxTokens, stream: true,
+    thinking: { type: 'enabled' },
+    ...(effort === undefined ? {} : { output_config: { effort } }),
+    messages: [{ role: 'user', content: 'Hallo' }],
+  });
+}
+
+test('T3: Kimi 2.3.0 bei effort max/xhigh -> budget_tokens 32000, effort entfaellt', () => {
+  for (const effort of ['max', 'xhigh', undefined]) {
+    const aus = ergaenzeDenkbudget(budgetBody(effort));
+    assert.deepEqual(aus.thinking, { type: 'enabled', budget_tokens: 32000 }, String(effort));
+    assert.equal(Object.hasOwn(aus, 'output_config'), false, String(effort));
+    assert.deepEqual(aus.messages, [{ role: 'user', content: 'Hallo' }]);
+    assert.equal(aus.max_tokens, 64000);
+  }
+});
+
+test('T3: Kimis Staffel low 1024 und medium 4096; Deckel max_tokens - 1', () => {
+  assert.equal(ergaenzeDenkbudget(budgetBody('low')).thinking.budget_tokens, 1024);
+  assert.equal(ergaenzeDenkbudget(budgetBody('medium')).thinking.budget_tokens, 4096);
+  assert.equal(ergaenzeDenkbudget(budgetBody('max', 8192)).thinking.budget_tokens, 8191);
+});
+
+test('T3: max_tokens zu klein fuer das Mindestbudget -> thinking disabled', () => {
+  assert.deepEqual(ergaenzeDenkbudget(budgetBody('max', 1024)).thinking, { type: 'disabled' });
+});
+
+test('T3: weitere output_config-Felder bleiben, nur effort entfaellt', () => {
+  const ein = tiefFrieren({ ...budgetBody('max'), output_config: { effort: 'max', format: { type: 'json_schema' } } });
+  assert.deepEqual(ergaenzeDenkbudget(ein).output_config, { format: { type: 'json_schema' } });
+});
+
+test('T3: vorhandenes Budget, adaptive und disabled bleiben dieselbe Referenz', () => {
+  const mitBudget = tiefFrieren({ ...budgetBody('high'), thinking: { type: 'enabled', budget_tokens: 32000 } });
+  const adaptiv = tiefFrieren({ ...budgetBody('max'), thinking: { type: 'adaptive', display: 'summarized' } });
+  const aus = tiefFrieren({ ...budgetBody(undefined), thinking: { type: 'disabled' } });
+  const ohne = tiefFrieren({ model: 'claude-opus-5-5', max_tokens: 10, messages: [] });
+  for (const b of [mitBudget, adaptiv, aus, ohne]) assert.equal(ergaenzeDenkbudget(b), b);
+});
+
+test('transformiere: T3 meldet denkbudget und setzt geaendert', () => {
+  const t = transformiere(budgetBody('max'), 'aus');
+  assert.equal(t.geaendert, true);
+  assert.equal(t.denkbudget, true);
+  assert.equal(t.body.thinking.budget_tokens, 32000);
+  const ohne = transformiere(tiefFrieren({ ...budgetBody(undefined), thinking: { type: 'adaptive' } }), 'aus');
+  assert.equal(ohne.denkbudget, false);
+  assert.equal(ohne.geaendert, false);
 });
