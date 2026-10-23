@@ -3,17 +3,18 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { ladeKonfig, normalisiereKonfig } from '../vermittler.mjs';
+import { preisFuer } from '../lib/protokoll.mjs';
+import { modellAliase } from '../setup/lib/toml-patch.mjs';
 import { WURZEL, tempOrdner } from './hilfen.mjs';
 
 const BASIS = 'C:/basis';
 const still = { warne: () => {} };
 
-test('Die ausgelieferte vermittler.json laedt: Port, Modus, vier Preise, Protokoll neben der Konfig (K40)', () => {
+test('Die ausgelieferte vermittler.json laedt: Port, Modus, Preise, Protokoll neben der Konfig (K40)', () => {
   const k = ladeKonfig();
   assert.equal(k.port, 37790);
   assert.equal(k.upstream, 'https://api.anthropic.com');
   assert.equal(k.mode, 'ttl1h');
-  assert.deepEqual(Object.keys(k.preise).sort(), ['claude-fable-5-1', 'claude-haiku-5-5', 'claude-opus-5-5', 'claude-sonnet-5-5']);
   assert.deepEqual(k.preise['claude-sonnet-5-5'], { input: 2, w5m: 2.5, w1h: 4, read: 0.1, output: 10 });
   assert.equal(k.logPath, path.join(WURZEL, 'protokoll.jsonl'));
   assert.ok(Object.isFrozen(k) && Object.isFrozen(k.preise));
@@ -136,4 +137,18 @@ test('0.5.0: kimiHome ist optional, wird aufgeloest und streng geprueft', () => 
   const warnungen = [];
   normalisiereKonfig({ kimiHome: './k' }, BASIS, { warne: (t) => warnungen.push(t) });
   assert.deepEqual(warnungen, [], 'kimiHome ist ein bekannter Schluessel');
+});
+
+test('0.5.1: jedes Modell aus setup/modelle.toml hat einen Preis; laengster Praefix gewinnt', () => {
+  const k = ladeKonfig();
+  const aliase = modellAliase(fs.readFileSync(path.join(WURZEL, 'setup', 'modelle.toml'), 'utf8'));
+  for (const alias of aliase) {
+    const modell = alias.slice('anthropic/'.length);
+    assert.notEqual(preisFuer(k.preise, modell), null, modell);
+  }
+  assert.equal(preisFuer(k.preise, 'claude-opus-5-5').input, 4);
+  assert.equal(preisFuer(k.preise, 'claude-opus-5').input, 5);
+  assert.equal(preisFuer(k.preise, 'claude-fable-5-1').read, 0.25);
+  assert.equal(preisFuer(k.preise, 'claude-fable-5').read, 1);
+  assert.equal(preisFuer(k.preise, 'claude-opus-4-5-20251101').input, 5);
 });

@@ -120,7 +120,7 @@ Alle Befehle im Ordner des Vermittlers; optional `--konfig <pfad>` für eine and
 | `node vermittler.mjs start` | startet losgelöst, falls nicht schon aktiv |
 | `node vermittler.mjs stop` | beendet den Dienst sauber über `POST /_vermittler/stop` mit seiner PID im Body (5 s Gnadenfrist; neue Anfragen bekommen in der Zeit 503 `overloaded_error`). „gestoppt“ heißt Prozess weg: Ist der Port zu, wartet `stop` bis 8 s auf das Prozessende. Erst danach, oder wenn der Dienst nach 6 s noch antwortet, `process.kill`, und nur wenn die PID aus `health` mit `vermittler.pid` übereinstimmt. Vor jedem Kill prüft `stop`, dass hinter der PID ein Node-Prozess steht (`tasklist` bzw. `ps`) und es nicht der eigene Aufruf ist; sonst wird nichts beendet und `vermittler.pid` als veraltet entfernt (`pid-fremd`, „PID-Datei veraltet, nichts beendet“). Eine hängende Instanz (nimmt an, antwortet nicht) bekommt erst 5 s Zeit, wieder zu antworten, und wird dann regulär gestoppt; schweigt sie weiter, wird sie nur mit passender `vermittler.pid` beendet (`besetzt-getoetet`). Bei einem alten Stand ohne Stopp-Endpunkt nennt `stop` den Handgriff |
 | `node vermittler.mjs restart` | nach Änderung an Konfiguration oder Code (geschieht beim nächsten Kimi-Start auch von selbst, siehe unten) |
-| `node vermittler.mjs status` | zeigt `health`, Port, Upstream, Protokollpfad |
+| `node vermittler.mjs status` | zeigt `health`, Port, Upstream, Protokollpfad; `health.konto` nennt Organisation und Workspace, in denen die letzte Antwort verbucht wurde (siehe „Kosten in der Claude Console“) |
 | `node vermittler.mjs bericht [--tage 7]` | Kosten je Modell und Modus, Gegenrechnung, Ersparnis gegen `ttl1h`, Warnungen. Abgebrochene Pings zählen mit (ohne Kosten, `status: null`) |
 
 Befehl und Flags werden vor dem Laden der Konfiguration geprüft: Ein Flag ohne Wert, ein
@@ -136,7 +136,7 @@ Konfiguration `vermittler.json`:
 | `modeByModel` | Modus je Modell-ID-Präfix |
 | `ping` | ganze Zahlen: `intervalSec` 30–285 (der Ping kann bis zu einem Takt von 5 s später kommen und muss trotzdem vor Ablauf des 5-min-Eintrags liegen), `maxIdleMin` 1–1440, `heartbeatGraceSec` 30–3600 (Gnadenfrist des Ping-Planers, nur wenn das Lebenszeichen der Kimi-Session unbekannt ist). In der Gegenrechnung gezählt werden Pings bei k·`intervalSec` strikt vor der nächsten Anfrage, höchstens bis `maxIdleMin` |
 | `logPath` | Protokolldatei; relativ zur Konfigdatei (Standard `./protokoll.jsonl`), `~` wird aufgelöst |
-| `preise` | Listenpreise je Million Tokens: `input`, `w5m`, `w1h`, `read`, `output` (Zahlen ab 0) |
+| `preise` | Listenpreise je Million Tokens: `input`, `w5m`, `w1h`, `read`, `output` (Zahlen ab 0), je Modell-ID-Präfix (längster gewinnt). Ausgeliefert für alle Modelle aus `setup/modelle.toml` (Stand Anthropic-Preisliste 2026-10-23; Haiku 5.5 mit dem Preis bis 100.000 Tokens) |
 | `kimiHome` | optional, Kimi-Verzeichnis für das Lebenszeichen (Lockdateien); Standard `KIMI_CODE_HOME`, sonst `~/.kimi-code`. `health` zeigt den verwendeten Wert |
 
 Unbekannte Schlüssel auf oberster Ebene erzeugen eine Warnung auf stderr, brechen aber nicht ab.
@@ -169,6 +169,16 @@ Warnungen im Protokoll (Feld `warnung`):
 Server-Meldungen gehen nur auf stderr und enthalten keine Inhalte. Läuft der Dienst losgelöst,
 landen sie in `vermittler.log`; zur Fehlersuche lässt sich `node vermittler.mjs serve` auch im
 Vordergrund starten (Strg+C stoppt sauber, ein zweites Strg+C sofort).
+
+## Kosten in der Claude Console
+
+Die Console verbucht Nutzung und Kosten je Organisation und Workspace des API-Keys, den Kimi
+mitschickt. Zeigt sie für Kimis Anfragen nichts (kein Cache, keine Kosten), ist meist eine
+andere Organisation oder ein anderer Workspace ausgewählt. `node vermittler.mjs status` zeigt
+unter `konto` die IDs aus Anthropics Antwortkopfzeilen (`anthropic-organization-id`,
+`anthropic-workspace-id`); in der Console diese Organisation wählen und im Nutzungsbericht nach
+diesem Workspace bzw. dem API-Key filtern. Unabhängig davon rechnet
+`node vermittler.mjs bericht` die Kosten lokal aus den `usage`-Feldern der Antworten.
 
 ## Rückweg
 
