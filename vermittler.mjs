@@ -259,6 +259,22 @@ function istLoopbackHost(host, port) {
   return [...LOOPBACK].some((name) => host.toLowerCase() === `${name}:${port}`);
 }
 
+// Konto-Kennung aus den Upstream-Antwortkopfzeilen (keine Geheimnisse): In welcher Organisation
+// und welchem Workspace landen die Anfragen? Die Claude Console zeigt Nutzung und Kosten je
+// Workspace; so laesst sich pruefen, ob man dort den richtigen ansieht.
+const KONTO_KOPFZEILEN = Object.freeze({ organisation: 'anthropic-organization-id', workspace: 'anthropic-workspace-id' });
+const KONTO_WERT = /^[A-Za-z0-9_-]{1,100}$/;
+
+export function kontoAus(kopfzeilen) {
+  if (!kopfzeilen || typeof kopfzeilen.get !== 'function') return null;
+  const konto = {};
+  for (const [feld, name] of Object.entries(KONTO_KOPFZEILEN)) {
+    const wert = kopfzeilen.get(name);
+    if (typeof wert === 'string' && KONTO_WERT.test(wert)) konto[feld] = wert;
+  }
+  return Object.keys(konto).length > 0 ? konto : null;
+}
+
 function fehlercodeVon(fehler) {
   return fehler?.code ?? fehler?.name ?? 'unbekannt';
 }
@@ -282,11 +298,17 @@ export function erzeugeServer(konfig, {
   });
   let server;
   let stoppt = false;
+  let konto = null;
+
+  function merkeKonto(kopfzeilen) {
+    const neu = kontoAus(kopfzeilen);
+    if (neu) konto = { ...neu, zuletzt: new Date(jetzt()).toISOString() };
+  }
 
   function health() {
     return {
       ok: true, dienst: DIENST, version: VERSION, konfigHash: konfig.konfigHash, pid: process.pid, mode: konfig.mode,
-      uptimeSec: Math.round((jetzt() - startMs) / 1000), pingSchluessel: planer.anzahl(), kimiHome,
+      uptimeSec: Math.round((jetzt() - startMs) / 1000), pingSchluessel: planer.anzahl(), kimiHome, konto,
     };
   }
 
@@ -340,7 +362,8 @@ export function erzeugeServer(konfig, {
         req, res, upstream: konfig.upstream, body: ausgehend, liestUsage: true, log,
         beobachter: {
           // Ping-Planer erst nach erfolgreichem Antwortbeginn; die Uhr laeuft ab Start der Anfrage.
-          kopf: (status) => {
+          kopf: (status, kopfzeilen) => {
+            merkeKonto(kopfzeilen);
             if (status < 200 || status >= 300) return;
             planer.anfrage({
               session: k.session, schluessel: k.schluessel, modell: json.model, modus, pfad: req.url,
