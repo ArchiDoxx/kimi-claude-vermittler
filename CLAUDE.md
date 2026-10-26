@@ -3,7 +3,8 @@
 Dieses Repo ist der **Anthropic-Vermittler**: ein lokaler HTTP-Proxy auf `127.0.0.1:37790`, der
 zwischen Kimi Code CLI und `api.anthropic.com` sitzt und nur den Claude-Verkehr sieht. Er setzt
 die Cache-Haltezeit von Kimis Anfragen auf eine Stunde oder hält 5-min-Einträge per Ping warm,
-glättet Tool-Schemas, die die Anthropic-API ablehnt, und protokolliert die Kosten. Kimi- und
+glättet Tool-Schemas, die die Anthropic-API ablehnt, fängt Kimi-Eigenheiten ab, die die API mit
+400 beantwortet (Denkbudget, Thinking-Bindung), und protokolliert die Kosten. Kimi- und
 GLM-Modelle laufen unverändert direkt.
 
 Du (Claude Code) richtest hier dieselbe Kette ein wie auf dem Ursprungs-PC. Folge den Schritten
@@ -117,6 +118,10 @@ schaden nicht. Danach spricht Kimi wieder direkt mit Anthropic (5 min Cache-Halt
 - **Claude bis 4.5 mit `effort` `max`:** Kimi 2.3.0 schickt dort kein Denkbudget (API-400
   „budget_tokens: Field required“); der Vermittler ergänzt es (T3, README). Direkt an Anthropic
   ohne Vermittler bleiben diese Modelle bei `effort = "max"` defekt.
+- **`/secondary-model` oder andere Änderungen am Secondary-Pool in `config.toml`** ändern die
+  Tool-Beschreibung laufender Sessions; die API lehnt danach deren alte Thinking-Blöcke mit 400 ab.
+  Der Vermittler wiederholt dann einmal mit `drop_block` (T4, README). Ohne Vermittler sind diese
+  Sessions verloren; Zurückstellen der Config rettet sie nicht verlässlich.
 - **`kimi-cu-win`** kostet etwa 5.300 Tokens Grundlast je Anfrage. Nur mit `--cu-win` einschalten,
   wenn der Mensch es will.
 - **Code-Update:** Nach einem `git pull` mit neuer Version erneuert der SessionStart-Hook den

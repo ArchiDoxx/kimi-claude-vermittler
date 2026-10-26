@@ -517,3 +517,78 @@ test('K49: Request-Targets mit /./ oder /../ ergeben 400, Upstream sieht nichts'
     assert.equal(fake.anfragen.length, vorher, ziel);
   }
 });
+
+// ---------- T4: Thinking-Bindung ----------
+
+function denkBody(sitzung) {
+  return messagesBody({ metadata: { user_id: sitzung }, thinking: { type: 'adaptive' } });
+}
+
+function upstreamSeit(start) {
+  return fake.anfragen.slice(start).map((a) => ({
+    beta: a.kopfzeilen['anthropic-beta'],
+    bindung: JSON.parse(a.body.toString('utf8')).thinking?.block_binding,
+  }));
+}
+
+test('T4: Bindungs-400 wird abgefangen, einmal mit drop_block und Beta wiederholt, Client sieht nur den Erfolg', async () => {
+  const start = fake.anfragen.length;
+  const antwort = await roh({ pfad: '/v1/messages?szenario=bindung', kopfzeilen: STANDARD_KOPF, body: JSON.stringify(denkBody('t4-retry')) });
+  assert.equal(antwort.status, 200);
+  assert.ok(antwort.body.equals(Buffer.from(SSE_TEXT, 'utf8')));
+  assert.deepEqual(upstreamSeit(start), [
+    { beta: undefined, bindung: undefined },
+    { beta: 'thinking-binding-controls-2026-08-01', bindung: { prefix_mismatch_behavior: 'drop_block' } },
+  ]);
+  const eintrag = leseProtokoll(logPfad).filter((z) => z.session === sha12('t4-retry')).pop();
+  assert.equal(eintrag.status, 200);
+});
+
+test('T4: nach dem ersten Treffer geht die Session gleich mit drop_block und vorhandenem Beta los', async () => {
+  await roh({ pfad: '/v1/messages?szenario=bindung', kopfzeilen: STANDARD_KOPF, body: JSON.stringify(denkBody('t4-merken')) });
+  const start = fake.anfragen.length;
+  const antwort = await roh({
+    pfad: '/v1/messages?szenario=bindung',
+    kopfzeilen: { ...STANDARD_KOPF, 'anthropic-beta': 'fine-grained-tool-streaming-2025-05-14' },
+    body: JSON.stringify(denkBody('t4-merken')),
+  });
+  assert.equal(antwort.status, 200);
+  assert.deepEqual(upstreamSeit(start), [{
+    beta: 'fine-grained-tool-streaming-2025-05-14, thinking-binding-controls-2026-08-01',
+    bindung: { prefix_mismatch_behavior: 'drop_block' },
+  }]);
+});
+
+test('T4: andere Session bleibt unberuehrt', async () => {
+  await roh({ pfad: '/v1/messages?szenario=bindung', kopfzeilen: STANDARD_KOPF, body: JSON.stringify(denkBody('t4-a')) });
+  const start = fake.anfragen.length;
+  await roh({ kopfzeilen: STANDARD_KOPF, body: JSON.stringify(denkBody('t4-b')) });
+  assert.deepEqual(upstreamSeit(start), [{ beta: undefined, bindung: undefined }]);
+});
+
+test('T4: ohne thinking-Objekt geht der Bindungs-400 unveraendert durch, keine Wiederholung', async () => {
+  const start = fake.anfragen.length;
+  const body = messagesBody({ metadata: { user_id: 't4-ohne-thinking' } });
+  const antwort = await roh({ pfad: '/v1/messages?szenario=bindung', kopfzeilen: STANDARD_KOPF, body: JSON.stringify(body) });
+  assert.equal(antwort.status, 400);
+  assert.match(JSON.parse(antwort.body.toString('utf8')).error.message, /prefix_mismatch_behavior/);
+  assert.equal(fake.anfragen.length - start, 1);
+});
+
+test('T4: anderer 400er mit thinking geht 1:1 durch, keine Wiederholung', async () => {
+  const start = fake.anfragen.length;
+  const antwort = await roh({ pfad: '/v1/messages?szenario=fehler400', kopfzeilen: STANDARD_KOPF, body: JSON.stringify(denkBody('t4-anderer')) });
+  assert.equal(antwort.status, 400);
+  assert.equal(antwort.kopfzeilen['retry-after'], '1');
+  assert.equal(JSON.parse(antwort.body.toString('utf8')).error.message, 'Fake-Fehler 400');
+  assert.equal(fake.anfragen.length - start, 1);
+});
+
+test('T4: session-ende vergisst die Bindungs-Session', async () => {
+  const sid = 't4-ende';
+  await roh({ pfad: '/v1/messages?szenario=bindung', kopfzeilen: STANDARD_KOPF, body: JSON.stringify(denkBody(sid)) });
+  await roh({ pfad: '/_vermittler/session-ende', kopfzeilen: { 'content-type': 'application/json' }, body: JSON.stringify({ session_id: sid }) });
+  const start = fake.anfragen.length;
+  await roh({ kopfzeilen: STANDARD_KOPF, body: JSON.stringify(denkBody(sid)) });
+  assert.deepEqual(upstreamSeit(start), [{ beta: undefined, bindung: undefined }]);
+});

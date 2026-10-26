@@ -37,6 +37,26 @@ function fehlerJson(typ, nachricht) {
   return JSON.stringify({ type: 'error', error: { type: typ, message: nachricht } });
 }
 
+// Wortlaut der API vom 2026-10-26 (Session mit geaenderter Tool-Beschreibung).
+export const BINDUNGS_FEHLER = fehlerJson(
+  'invalid_request_error',
+  'messages.1.content.0: Invalid `signature` in `thinking` block. The block is bound to a different conversation. '
+    + 'Remove the block, or set `thinking.block_binding.prefix_mismatch_behavior` to "drop_block". '
+    + 'That setting requires the `thinking-binding-controls-2026-08-01` value in the `anthropic-beta` header. '
+    + 'The `tools` list differs from the one this block was created with.',
+);
+
+// Wie die API: alte Thinking-Bloecke passen nicht zur Tool-Liste; erst drop_block plus Beta hilft.
+function bindungAngenommen(req, body) {
+  const beta = String(req.headers['anthropic-beta'] ?? '').split(',').map((s) => s.trim());
+  try {
+    const wert = JSON.parse(body.toString('utf8'))?.thinking?.block_binding?.prefix_mismatch_behavior;
+    return wert === 'drop_block' && beta.includes('thinking-binding-controls-2026-08-01');
+  } catch {
+    return false;
+  }
+}
+
 // Zerlegt den Text absichtlich mitten in Zeilen und mitten in Mehrbyte-Zeichen.
 function zerlege(puffer) {
   const teile = [];
@@ -117,6 +137,16 @@ async function antworte(req, res, body, url) {
       const text = JSON.stringify(JSON_ANTWORT);
       res.writeHead(200, { ...allgemein, 'content-type': 'application/json', 'content-length': Buffer.byteLength(text) });
       res.end(text);
+      return;
+    }
+    case 'bindung': {
+      if (bindungAngenommen(req, body)) {
+        res.writeHead(200, { ...allgemein, 'content-type': 'text/event-stream; charset=utf-8' });
+        res.end(SSE_TEXT);
+        return;
+      }
+      res.writeHead(400, { ...allgemein, 'content-type': 'application/json' });
+      res.end(BINDUNGS_FEHLER);
       return;
     }
     case 'fehler400':

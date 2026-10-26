@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { anfrageKopfzeilen, antwortKopfzeilen, erzeugeSseLeser, fehlerKoerper } from '../lib/weiterleitung.mjs';
+import { anfrageKopfzeilen, antwortKopfzeilen, erzeugeSseLeser, fehlerKoerper, mitBeta } from '../lib/weiterleitung.mjs';
 import { SSE_TEXT } from './fake-upstream.mjs';
 import { TESTSCHLUESSEL } from './hilfen.mjs';
 
@@ -261,4 +261,41 @@ test('K38: nach Ueberschreiten von maxJson wird nichts mehr gesammelt (usage ble
 test('K49: istSichererPfad lehnt Punkt-Segmente ab, auch am Ende; Query bleibt erlaubt', () => {
   for (const p of ['/v1/./x', '/v1/../x', '/v1/x/..', '/v1/x/.', '/./x', '/..']) assert.equal(istSichererPfad(p), false, p);
   for (const p of ['/v1/messages?a=../b', '/v1/x.y/z', '/v1/.hidden', '/v1/messages?beta=true']) assert.equal(istSichererPfad(p), true, p);
+});
+
+test('T4: mitBeta haengt den Wert an, ohne Dublette; ohne Wert bleibt alles gleich', () => {
+  const ohneBeta = { 'x-api-key': TESTSCHLUESSEL };
+  assert.deepEqual(mitBeta(ohneBeta, 'b-1'), { 'x-api-key': TESTSCHLUESSEL, 'anthropic-beta': 'b-1' });
+  assert.equal(mitBeta({ 'anthropic-beta': 'a, b-1' }, 'b-1')['anthropic-beta'], 'a, b-1');
+  assert.equal(mitBeta({ 'anthropic-beta': 'a' }, 'b-1')['anthropic-beta'], 'a, b-1');
+  assert.equal(mitBeta(ohneBeta, null), ohneBeta);
+  assert.equal(ohneBeta['anthropic-beta'], undefined, 'Eingabe bleibt unveraendert');
+});
+
+test('T4: Fehlerkoerper ueber maxJson wird nie abgefangen, sondern vollstaendig durchgereicht', async () => {
+  const fake = await starteFakeUpstream();
+  const gesehen = [];
+  const server = await vermittlerFuer(fake, { maxJson: 10, fangeFehler: (s, t) => { gesehen.push(t); return true; } });
+  try {
+    const antwort = await hole(server, '/v1/messages?szenario=fehler400');
+    assert.equal(antwort.status, 400);
+    assert.equal(JSON.parse(antwort.body).error.message, 'Fake-Fehler 400');
+    assert.deepEqual(gesehen, []);
+  } finally {
+    await zu(server, fake);
+  }
+});
+
+test('T4: fangeFehler sieht den Fehlertext; false reicht ihn mit Status und Kopfzeilen durch', async () => {
+  const fake = await starteFakeUpstream();
+  const gesehen = [];
+  const server = await vermittlerFuer(fake, { fangeFehler: (s, t) => { gesehen.push([s, JSON.parse(t).error.message]); return false; } });
+  try {
+    const antwort = await hole(server, '/v1/messages?szenario=fehler429');
+    assert.equal(antwort.status, 429);
+    assert.equal(JSON.parse(antwort.body).error.message, 'Fake-Fehler 429');
+    assert.deepEqual(gesehen, [[429, 'Fake-Fehler 429']]);
+  } finally {
+    await zu(server, fake);
+  }
 });

@@ -16,7 +16,7 @@ node setup/setup.mjs einrichten
 Einzelheiten, Key-Regeln und Rückweg (`node setup/setup.mjs rueckweg`) stehen in
 [CLAUDE.md](CLAUDE.md). Die Handanleitung unten bleibt gültig.
 
-Stand: Stufe 1 und Stufe 2, Version 0.5.0 (angepasst an Kimi Code CLI 2.3.0).
+Stand: Stufe 1 und Stufe 2, Version 0.6.0 (angepasst an Kimi Code CLI 2.3.0).
 
 - **T1 Haltezeit:** setzt `ttl: "1h"` auf Kimis `cache_control`-Marken (Modus `ttl1h`, Standard).
   Weitere Modi: `sockel1h` (nur Tools und System 1 h), `ping` (siehe unten), `aus`.
@@ -44,6 +44,17 @@ Stand: Stufe 1 und Stufe 2, Version 0.5.0 (angepasst an Kimi Code CLI 2.3.0).
   400. Der Vermittler ergänzt das Budget nach Kimis Staffel (low 1024, medium 4096, sonst 32000,
   höchstens `max_tokens` − 1) und entfernt `output_config.effort`. Reicht `max_tokens` nicht für
   1024, schaltet er Thinking ab.
+- **T4 Thinking-Bindung (ab 0.6.0):** Die API bindet jeden signierten Thinking-Block an den
+  Gesprächsanfang samt Tool-Liste. Kimi schreibt die Secondary-Modell-Liste in die Beschreibung der
+  Tools `Agent` und `AgentSwarm` und aktualisiert sie in laufenden Sessions, sobald sich
+  `config.toml` ändert (etwa per `/secondary-model`); danach antwortet die API jeder Anfrage dieser
+  Sessions mit 400 („Invalid `signature` in `thinking` block … The `tools` list differs“). Der
+  Vermittler hält genau diesen 400er zurück und wiederholt die Anfrage einmal mit
+  `thinking.block_binding.prefix_mismatch_behavior: "drop_block"` und dem Beta-Wert
+  `thinking-binding-controls-2026-08-01` in `anthropic-beta`; die API verwirft dann die nicht mehr
+  passenden alten Blöcke. Die Session wird gemerkt und bis `SessionEnd` gleich so gesendet.
+  Andere Anfragen und andere Fehler gehen unverändert durch; ohne `thinking`-Objekt im Body gibt
+  es keine Wiederholung.
 - **Kostenprotokoll** `protokoll.jsonl` mit Gegenrechnung der Varianten `ttl1h`, `ping`,
   `sockel1h`, `heute`, ohne Inhalte, Prompts oder Schlüssel.
 - **Hook-Endpunkte** unter `/_vermittler/` (`health`, `session-ende`, `heartbeat`,

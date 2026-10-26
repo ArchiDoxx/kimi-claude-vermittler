@@ -7,8 +7,10 @@ import http from 'node:http';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { MODI, modusFuer, transformiere } from './lib/transform.mjs';
-import { leiteWeiter, sendeFehler, fehlerKoerper, anfrageKopfzeilen, istSichererPfad } from './lib/weiterleitung.mjs';
+import {
+  MODI, modusFuer, transformiere, BINDUNGS_BETA, istBindungsFehler, verwirfFremdbindung,
+} from './lib/transform.mjs';
+import { leiteWeiter, sendeFehler, fehlerKoerper, anfrageKopfzeilen, istSichererPfad, mitBeta } from './lib/weiterleitung.mjs';
 import { erzeugePingPlaner } from './lib/ping.mjs';
 import { erzeugeProtokoll, kennungen, sha12, leseProtokoll, werteAus, formatiereBericht } from './lib/protokoll.mjs';
 import { erzeugeSitzungen } from './lib/sitzungen.mjs';
@@ -299,6 +301,8 @@ export function erzeugeServer(konfig, {
   let server;
   let stoppt = false;
   let konto = null;
+  // T4: Sessions, deren alte Thinking-Bloecke nicht mehr zur Tool-Liste passen (bis session-ende).
+  const bindungsSitzungen = new Set();
 
   function merkeKonto(kopfzeilen) {
     const neu = kontoAus(kopfzeilen);
@@ -340,6 +344,7 @@ export function erzeugeServer(konfig, {
       return sendeJson(res, 200, { ok: true, verworfen, pings: planer.subagentEnde(session, haupt) });
     }
     const pings = planer.sessionEnde(session);
+    bindungsSitzungen.delete(session);
     return sendeJson(res, 200, { ok: true, verworfen: sitzungen.sessionEnde(session), pings });
   }
 
@@ -355,11 +360,17 @@ export function erzeugeServer(konfig, {
     const k = kennungen(t.body);
     sitzungen.anfrage(k.session, k.schluessel, k.sockelLaenge);
     const h = protokoll.beginn({ ...k, modell: json.model, modus, marken: t.marken });
-    const ausgehend = t.geaendert ? Buffer.from(JSON.stringify(t.body), 'utf8') : body;
-    let erg = null;
-    try {
-      erg = await weiterleiten({
+    const ohneT4 = t.geaendert ? Buffer.from(JSON.stringify(t.body), 'utf8') : body;
+    const mitT4 = verwirfFremdbindung(t.body);
+    const t4Moeglich = mitT4 !== t.body;
+    const t4Ausgehend = () => Buffer.from(JSON.stringify(mitT4), 'utf8');
+
+    // T4 laeuft nur, wenn die Session schon einmal am Bindungsfehler gescheitert ist; sonst geht
+    // die Anfrage unveraendert los und wird erst beim Bindungs-400 einmal wiederholt.
+    function sende(ausgehend, beta, fangeFehler) {
+      return weiterleiten({
         req, res, upstream: konfig.upstream, body: ausgehend, liestUsage: true, log,
+        zusatzBeta: beta, fangeFehler,
         beobachter: {
           // Ping-Planer erst nach erfolgreichem Antwortbeginn; die Uhr laeuft ab Start der Anfrage.
           kopf: (status, kopfzeilen) => {
@@ -367,7 +378,7 @@ export function erzeugeServer(konfig, {
             if (status < 200 || status >= 300) return;
             planer.anfrage({
               session: k.session, schluessel: k.schluessel, modell: json.model, modus, pfad: req.url,
-              body: ausgehend, kopfzeilen: anfrageKopfzeilen(req.headers), startMs: h.startMs,
+              body: ausgehend, kopfzeilen: mitBeta(anfrageKopfzeilen(req.headers), beta), startMs: h.startMs,
             });
           },
           ersteByte: () => {
@@ -376,6 +387,20 @@ export function erzeugeServer(konfig, {
           },
         },
       });
+    }
+
+    let erg = null;
+    try {
+      if (t4Moeglich && bindungsSitzungen.has(k.session)) {
+        erg = await sende(t4Ausgehend(), BINDUNGS_BETA, null);
+      } else {
+        erg = await sende(ohneT4, null, t4Moeglich ? istBindungsFehler : null);
+        if (erg.abgefangen) {
+          bindungsSitzungen.add(k.session);
+          log('T4: Thinking-Bindung passt nicht mehr zur Tool-Liste, Wiederholung mit drop_block');
+          erg = await sende(t4Ausgehend(), BINDUNGS_BETA, null);
+        }
+      }
     } finally {
       // Ein Fehler beim Protokollieren darf den Ursprungsfehler nicht verdecken.
       try {

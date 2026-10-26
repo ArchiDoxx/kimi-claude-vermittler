@@ -1,7 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { setzeHaltezeit, glaetteSchemas, transformiere, modusFuer, zaehleMarken, ergaenzeDenkbudget } from '../lib/transform.mjs';
+import {
+  setzeHaltezeit, glaetteSchemas, transformiere, modusFuer, zaehleMarken, ergaenzeDenkbudget,
+  istBindungsFehler, verwirfFremdbindung, BINDUNGS_BETA,
+} from '../lib/transform.mjs';
 import { tiefFrieren } from './hilfen.mjs';
+import { BINDUNGS_FEHLER } from './fake-upstream.mjs';
 
 const EPH = () => ({ type: 'ephemeral' });
 
@@ -293,4 +297,39 @@ test('transformiere: T3 meldet denkbudget und setzt geaendert', () => {
   const ohne = transformiere(tiefFrieren({ ...budgetBody(undefined), thinking: { type: 'adaptive' } }), 'aus');
   assert.equal(ohne.denkbudget, false);
   assert.equal(ohne.geaendert, false);
+});
+
+// ---------- T4: Thinking-Bindung ----------
+
+test('T4: istBindungsFehler erkennt den 400er der API', () => {
+  assert.equal(istBindungsFehler(400, BINDUNGS_FEHLER), true);
+});
+
+test('T4: istBindungsFehler lehnt andere Fehler, andere Status und Unlesbares ab', () => {
+  const anderer = JSON.stringify({ type: 'error', error: { type: 'invalid_request_error', message: 'max_tokens: too large' } });
+  assert.equal(istBindungsFehler(400, anderer), false);
+  assert.equal(istBindungsFehler(500, BINDUNGS_FEHLER), false);
+  assert.equal(istBindungsFehler(400, 'kein json'), false);
+  assert.equal(istBindungsFehler(400, ''), false);
+});
+
+test('T4: BINDUNGS_BETA ist der von der API verlangte Beta-Wert', () => {
+  assert.equal(BINDUNGS_BETA, 'thinking-binding-controls-2026-08-01');
+});
+
+test('T4: verwirfFremdbindung setzt drop_block und laesst die Eingabe unveraendert', () => {
+  const ein = tiefFrieren({ model: 'claude-opus-5-5', thinking: { type: 'adaptive', display: 'summarized' }, messages: [] });
+  const aus = verwirfFremdbindung(ein);
+  assert.deepEqual(aus.thinking, {
+    type: 'adaptive', display: 'summarized', block_binding: { prefix_mismatch_behavior: 'drop_block' },
+  });
+  assert.equal(aus.messages, ein.messages);
+  assert.equal(ein.thinking.block_binding, undefined);
+});
+
+test('T4: verwirfFremdbindung ohne thinking-Objekt oder schon gesetzt -> dieselbe Referenz', () => {
+  const ohne = tiefFrieren({ model: 'claude-opus-5-5', messages: [] });
+  const gesetzt = tiefFrieren({ thinking: { type: 'adaptive', block_binding: { prefix_mismatch_behavior: 'drop_block' } } });
+  assert.equal(verwirfFremdbindung(ohne), ohne);
+  assert.equal(verwirfFremdbindung(gesetzt), gesetzt);
 });
